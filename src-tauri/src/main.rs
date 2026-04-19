@@ -3,6 +3,8 @@
     windows_subsystem = "windows"
 )]
 
+mod updater;
+
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -61,10 +63,24 @@ async fn save_file_dialog(app: tauri::AppHandle, data: Vec<u8>) -> Result<Option
 }
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .try_init()
+        .ok();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![open_file, save_file, save_file_dialog])
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .setup(|app| {
+            updater::spawn_update_check(app.handle().clone());
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            open_file,
+            save_file,
+            save_file_dialog
+        ])
         .run(tauri::generate_context!())
-        .expect("error while running SofDocs desktop");
+        .expect("error while running Alto desktop");
 }
