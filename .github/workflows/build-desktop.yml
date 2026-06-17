@@ -76,6 +76,10 @@ jobs:
 
       - name: Build sidecar (alto-mcp)
         shell: bash
+        env:
+          # openssl-src (vendored, Windows) doit utiliser Strawberry Perl, pas le
+          # perl incomplet de Git Bash. Ignoré sur Linux (OpenSSL système).
+          OPENSSL_SRC_PERL: C:\Strawberry\perl\bin\perl.exe
         run: |
           set -euo pipefail
           cd src-tauri
@@ -90,6 +94,8 @@ jobs:
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
+        env:
+          OPENSSL_SRC_PERL: C:\Strawberry\perl\bin\perl.exe
         with:
           projectPath: "."
 

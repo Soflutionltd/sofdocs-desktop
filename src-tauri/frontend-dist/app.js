@@ -2770,8 +2770,27 @@ function setupTabsScrolling() {
 async function activateTab(tabId) {
 	const tab = state.tabs.find((candidate) => candidate.id === tabId);
 	if (!tab) return;
-	// Déjà sur ce document et pas en accueil → rien à faire.
-	if (tabId === state.activeTabId && !state.viewingHome) return;
+
+	// La vue "Créer" est un calque affiché par-dessus le document : on la ferme
+	// toujours avant de (ré)afficher un onglet, sinon cliquer sur l'onglet du
+	// fichier ouvert laisse la fenêtre "Créer" visible.
+	const createViewOpen = !elements.createView.classList.contains('hidden');
+	if (createViewOpen) {
+		elements.createView.classList.add('hidden');
+	}
+
+	// Déjà sur ce document et pas en accueil → ré-afficher la pile de pages
+	// (utile quand on ne fait que fermer la vue "Créer" par-dessus).
+	if (tabId === state.activeTabId && !state.viewingHome) {
+		if (createViewOpen) {
+			elements.emptyState.classList.add('hidden');
+			elements.pagesStack.classList.remove('hidden');
+			renderTabs();
+			updateUi();
+			updateHomeButtonState();
+		}
+		return;
+	}
 
 	// On revient d'un accueil affiché par-dessus le document déjà chargé : pas besoin
 	// de tout recharger, on ré-affiche simplement la pile de pages.
