@@ -4,7 +4,7 @@
 )]
 
 use sofdocs_desktop::{
-    llm, ocr, pdf_compress, pdf_engine, pdf_forms, pdf_ops, pdf_sign, pdf_tools,
+    llm, ocr, pdf_compress, pdf_engine, pdf_forms, pdf_ops, pdf_sign, pdf_tools, system_fonts,
 };
 
 use std::path::Path;
@@ -154,6 +154,16 @@ async fn export_edited_pdf(
     pages: Vec<pdf_engine::FlattenedPage>,
 ) -> Result<tauri::ipc::Response, String> {
     pdf_engine::export_flattened_pdf(pages).map(tauri::ipc::Response::new)
+}
+
+/// Liste les familles de polices installées sur la machine, pour le sélecteur
+/// de police de l'éditeur. Énumération potentiellement coûteuse → exécutée hors
+/// du thread principal.
+#[tauri::command]
+async fn list_system_fonts() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(system_fonts::list_system_fonts)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1096,6 +1106,7 @@ fn main() {
             ocr_page,
             ocr_pdf_page,
             export_edited_pdf,
+            list_system_fonts,
             create_blank_pdf,
             open_file,
             save_file,

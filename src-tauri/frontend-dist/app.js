@@ -393,6 +393,8 @@ const translations = {
 		exportedEdited: 'Edited PDF exported.',
 		localNotesCleared: 'Local notes cleared.',
 		fileSaved: 'File saved.',
+		fontsWebGroup: 'Online fonts',
+		fontsSystemGroup: 'Fonts on this computer',
 		createTab: '+ Create',
 		saveChangesTitle: 'Save changes?',
 		saveChangesMessage: 'This PDF contains unsaved changes.',
@@ -663,6 +665,8 @@ const translations = {
 		exportedEdited: 'PDF modifié exporté.',
 		localNotesCleared: 'Notes locales effacées.',
 		fileSaved: 'Fichier enregistré.',
+		fontsWebGroup: 'Polices en ligne',
+		fontsSystemGroup: 'Polices de cet ordinateur',
 		createTab: '+ Créer',
 		saveChangesTitle: 'Enregistrer les modifications ?',
 		saveChangesMessage: 'Ce PDF contient des modifications non enregistrées.',
@@ -4137,6 +4141,80 @@ function ensureCloudFont(family) {
 	document.head.append(link);
 }
 
+// Polices "en ligne" proposées dans le sélecteur (toutes OFL, rendu premium).
+// Chargées à la demande via ensureCloudFont() au moment de la sélection.
+const WEB_FONT_CHOICES = [
+	'Inter', 'Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Poppins', 'Source Sans 3',
+	'Source Serif 4', 'Merriweather', 'Lora', 'Playfair Display', 'Nunito', 'Raleway',
+	'Work Sans', 'PT Sans', 'PT Serif', 'Noto Sans', 'Noto Serif', 'Oswald', 'Bebas Neue',
+	'JetBrains Mono', 'Fira Code', 'IBM Plex Sans', 'IBM Plex Serif', 'IBM Plex Mono',
+	'Roboto Mono', 'Roboto Slab', 'Rubik', 'DM Sans', 'DM Serif Display', 'Manrope',
+	'Space Grotesk', 'EB Garamond', 'Libre Baskerville', 'Cormorant', 'Archivo', 'Karla',
+	'Mulish', 'Quicksand', 'Josefin Sans', 'Crimson Text'
+];
+const _webFontSet = new Set(WEB_FONT_CHOICES.map((family) => family.toLowerCase()));
+
+function isWebFontChoice(family) {
+	return Boolean(family) && _webFontSet.has(family.toLowerCase());
+}
+
+// Peuple (une seule fois) le sélecteur de police avec les polices en ligne puis
+// toutes les polices installées sur la machine. La recherche se fait via la
+// saisie au clavier native du <select> (type-ahead).
+let _fontSelectPopulated = false;
+async function ensureFontSelectPopulated() {
+	if (_fontSelectPopulated) return;
+	const select = elements.formatFont;
+	if (!select) return;
+	_fontSelectPopulated = true;
+
+	// On conserve l'option 0 ("Police du document" / auto) et on remplace le reste.
+	const autoOption = select.options[0]
+		? select.options[0].cloneNode(true)
+		: null;
+	select.innerHTML = '';
+	if (autoOption) select.append(autoOption);
+
+	const webGroup = document.createElement('optgroup');
+	webGroup.label = t('fontsWebGroup');
+	for (const family of WEB_FONT_CHOICES) {
+		const option = document.createElement('option');
+		option.value = family;
+		option.textContent = family;
+		option.style.fontFamily = `"${family}", sans-serif`;
+		webGroup.append(option);
+	}
+	select.append(webGroup);
+
+	let families = [];
+	try {
+		families = await invokeCommand('list_system_fonts');
+	} catch (_err) {
+		families = [];
+	}
+	if (Array.isArray(families) && families.length) {
+		const systemGroup = document.createElement('optgroup');
+		systemGroup.label = t('fontsSystemGroup');
+		const fragment = document.createDocumentFragment();
+		for (const family of families) {
+			const option = document.createElement('option');
+			option.value = family;
+			option.textContent = family;
+			option.style.fontFamily = `"${family}"`;
+			fragment.append(option);
+		}
+		systemGroup.append(fragment);
+		select.append(systemGroup);
+	}
+
+	// Réaligne la valeur affichée sur le bloc actuellement sélectionné, au cas où
+	// la liste système est arrivée après le premier rendu du panneau.
+	const block = state.editBlocks.find((b) => b.id === state.selectedBlockId);
+	if (block && block.fontFamilyOverride) {
+		select.value = block.fontFamilyOverride;
+	}
+}
+
 function applyBlockFontStyle(element, block) {
 	element.style.fontWeight = block.bold ? '700' : '400';
 	element.style.fontStyle = block.italic ? 'italic' : 'normal';
@@ -5237,6 +5315,7 @@ function updateSelectedEditField() {
 function updateFormatPanel(block) {
 	const panel = elements.formatPanel;
 	if (!panel) return;
+	void ensureFontSelectPopulated();
 	const active = Boolean(block && block.kind !== 'image');
 	panel.dataset.empty = active ? 'false' : 'true';
 
@@ -5975,6 +6054,17 @@ async function exportEditedPdf(suggestedName) {
 		if (!tab || !tab.dirty) {
 			bytes = Array.from(state.fileBytes);
 		} else {
+			// Avant d'aplatir en image : on s'assure que toutes les polices en ligne
+			// utilisées par les blocs édités sont bien chargées, sinon le canvas
+			// dessinerait avec une police de repli dans le JPEG exporté.
+			for (const block of state.editBlocks) {
+				if (isWebFontChoice(block.fontFamilyOverride)) {
+					ensureCloudFont(block.fontFamilyOverride);
+				}
+			}
+			if (document.fonts?.ready) {
+				try { await document.fonts.ready; } catch (_err) { /* non bloquant */ }
+			}
 			const pages = [];
 			for (let pageNumber = 1; pageNumber <= state.pdf.numPages; pageNumber += 1) {
 				pages.push(await renderFlattenedPage(pageNumber));
@@ -8772,6 +8862,11 @@ elements.deleteEditBlockPanel.addEventListener('click', hideSelectedBlock);
 
 elements.formatFont?.addEventListener('change', () => {
 	const value = elements.formatFont.value;
+	// Police en ligne : on la charge (et on la garde au chaud) pour qu'elle soit
+	// disponible au rendu canvas et à l'aplatissement de l'export.
+	if (isWebFontChoice(value)) {
+		ensureCloudFont(value);
+	}
 	applyFormatChange((block) => {
 		block.fontFamilyOverride = value || null;
 	});

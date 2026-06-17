@@ -9,3 +9,4 @@ pub mod pdf_engine;
 pub mod pdf_ops;
 pub mod pdf_sign;
 pub mod pdf_tools;
+pub mod system_fonts;

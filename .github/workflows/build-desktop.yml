@@ -54,6 +54,8 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
+            libfontconfig1-dev \
+            libfreetype6-dev \
             libssl-dev \
             pkg-config \
             build-essential \
