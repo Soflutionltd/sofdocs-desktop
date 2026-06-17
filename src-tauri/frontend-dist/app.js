@@ -394,6 +394,11 @@ const translations = {
 		localNotesCleared: 'Local notes cleared.',
 		fileSaved: 'File saved.',
 		fontsWebGroup: 'Online fonts',
+		fontsCatSans: 'Online · Sans-serif',
+		fontsCatSerif: 'Online · Serif',
+		fontsCatMono: 'Online · Monospace',
+		fontsCatDisplay: 'Online · Display',
+		fontsCatScript: 'Online · Handwriting',
 		fontsSystemGroup: 'Fonts on this computer',
 		createTab: '+ Create',
 		saveChangesTitle: 'Save changes?',
@@ -666,6 +671,11 @@ const translations = {
 		localNotesCleared: 'Notes locales effacées.',
 		fileSaved: 'Fichier enregistré.',
 		fontsWebGroup: 'Polices en ligne',
+		fontsCatSans: 'En ligne · Sans-serif',
+		fontsCatSerif: 'En ligne · Serif',
+		fontsCatMono: 'En ligne · Monospace',
+		fontsCatDisplay: 'En ligne · Display',
+		fontsCatScript: 'En ligne · Manuscrites',
 		fontsSystemGroup: 'Polices de cet ordinateur',
 		createTab: '+ Créer',
 		saveChangesTitle: 'Enregistrer les modifications ?',
@@ -4141,17 +4151,71 @@ function ensureCloudFont(family) {
 	document.head.append(link);
 }
 
-// Polices "en ligne" proposées dans le sélecteur (toutes OFL, rendu premium).
-// Chargées à la demande via ensureCloudFont() au moment de la sélection.
-const WEB_FONT_CHOICES = [
-	'Inter', 'Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Poppins', 'Source Sans 3',
-	'Source Serif 4', 'Merriweather', 'Lora', 'Playfair Display', 'Nunito', 'Raleway',
-	'Work Sans', 'PT Sans', 'PT Serif', 'Noto Sans', 'Noto Serif', 'Oswald', 'Bebas Neue',
-	'JetBrains Mono', 'Fira Code', 'IBM Plex Sans', 'IBM Plex Serif', 'IBM Plex Mono',
-	'Roboto Mono', 'Roboto Slab', 'Rubik', 'DM Sans', 'DM Serif Display', 'Manrope',
-	'Space Grotesk', 'EB Garamond', 'Libre Baskerville', 'Cormorant', 'Archivo', 'Karla',
-	'Mulish', 'Quicksand', 'Josefin Sans', 'Crimson Text'
+// Polices "en ligne" proposées dans le sélecteur (catalogue Google Fonts, toutes
+// OFL). Aucune n'est embarquée dans l'app : elles sont chargées à la demande via
+// ensureCloudFont() à la sélection → zéro poids ajouté au binaire.
+const WEB_FONT_CATEGORIES = [
+	{
+		key: 'fontsCatSans',
+		families: [
+			'Inter', 'Roboto', 'Open Sans', 'Lato', 'Montserrat', 'Poppins', 'Source Sans 3',
+			'Noto Sans', 'Nunito', 'Nunito Sans', 'Raleway', 'Work Sans', 'Mulish', 'Manrope',
+			'Rubik', 'Karla', 'DM Sans', 'Space Grotesk', 'Quicksand', 'Josefin Sans', 'PT Sans',
+			'Fira Sans', 'Cabin', 'Oxygen', 'Hind', 'Heebo', 'Barlow', 'Barlow Condensed',
+			'Archivo', 'Archivo Narrow', 'Assistant', 'Titillium Web', 'Kanit', 'Prompt',
+			'Sarabun', 'Dosis', 'Exo 2', 'Maven Pro', 'Catamaran', 'Be Vietnam Pro', 'Figtree',
+			'Plus Jakarta Sans', 'Outfit', 'Sora', 'Albert Sans', 'Lexend', 'Public Sans',
+			'Red Hat Display', 'Red Hat Text', 'Urbanist', 'Epilogue', 'Hanken Grotesk', 'Jost',
+			'Questrial', 'Varela Round', 'Asap', 'Chivo', 'Overpass', 'Mukta', 'Cairo', 'Almarai',
+			'IBM Plex Sans', 'Libre Franklin', 'Readex Pro', 'Saira', 'Signika', 'Mukta',
+			'Schibsted Grotesk', 'Onest', 'Instrument Sans', 'Bricolage Grotesque'
+		]
+	},
+	{
+		key: 'fontsCatSerif',
+		families: [
+			'Merriweather', 'Lora', 'Playfair Display', 'PT Serif', 'Noto Serif', 'Source Serif 4',
+			'EB Garamond', 'Libre Baskerville', 'Crimson Text', 'Crimson Pro', 'Cormorant',
+			'Cormorant Garamond', 'Bitter', 'Domine', 'Roboto Slab', 'Zilla Slab', 'Arvo',
+			'Vollkorn', 'Spectral', 'Frank Ruhl Libre', 'Cardo', 'Alegreya', 'Old Standard TT',
+			'Tinos', 'Bodoni Moda', 'Marcellus', 'Cinzel', 'DM Serif Display', 'DM Serif Text',
+			'Newsreader', 'Fraunces', 'Petrona', 'Gelasio', 'Lustria', 'Literata',
+			'Noticia Text', 'Rozha One', 'Yeseva One', 'Prata', 'Sorts Mill Goudy', 'Italiana',
+			'IBM Plex Serif', 'Besley', 'Faustina', 'Suranna'
+		]
+	},
+	{
+		key: 'fontsCatMono',
+		families: [
+			'JetBrains Mono', 'Fira Code', 'IBM Plex Mono', 'Roboto Mono', 'Source Code Pro',
+			'Space Mono', 'Inconsolata', 'Ubuntu Mono', 'PT Mono', 'Cousine', 'Anonymous Pro',
+			'DM Mono', 'Overpass Mono', 'Red Hat Mono', 'Martian Mono', 'Spline Sans Mono',
+			'Azeret Mono', 'Fragment Mono', 'Nova Mono'
+		]
+	},
+	{
+		key: 'fontsCatDisplay',
+		families: [
+			'Bebas Neue', 'Oswald', 'Anton', 'Archivo Black', 'Abril Fatface', 'Righteous',
+			'Bungee', 'Fjalla One', 'Alfa Slab One', 'Passion One', 'Staatliches', 'Teko',
+			'Russo One', 'Black Ops One', 'Bangers', 'Comfortaa', 'Fredoka', 'Baloo 2',
+			'Titan One', 'Concert One', 'Luckiest Guy', 'Shrikhand', 'Ultra', 'Monoton',
+			'Audiowide', 'Orbitron', 'Press Start 2P', 'Rye', 'Cinzel Decorative', 'Unbounded',
+			'Big Shoulders Display', 'Syne', 'Chango'
+		]
+	},
+	{
+		key: 'fontsCatScript',
+		families: [
+			'Dancing Script', 'Pacifico', 'Caveat', 'Satisfy', 'Great Vibes', 'Sacramento',
+			'Shadows Into Light', 'Indie Flower', 'Permanent Marker', 'Kalam', 'Patrick Hand',
+			'Amatic SC', 'Courgette', 'Cookie', 'Allura', 'Parisienne', 'Yellowtail',
+			'Marck Script', 'Homemade Apple', 'Gloria Hallelujah', 'Architects Daughter',
+			'Lobster', 'Lobster Two', 'Damion', 'Tangerine', 'Pinyon Script'
+		]
+	}
 ];
+const WEB_FONT_CHOICES = WEB_FONT_CATEGORIES.flatMap((category) => category.families);
 const _webFontSet = new Set(WEB_FONT_CHOICES.map((family) => family.toLowerCase()));
 
 function isWebFontChoice(family) {
@@ -4175,16 +4239,18 @@ async function ensureFontSelectPopulated() {
 	select.innerHTML = '';
 	if (autoOption) select.append(autoOption);
 
-	const webGroup = document.createElement('optgroup');
-	webGroup.label = t('fontsWebGroup');
-	for (const family of WEB_FONT_CHOICES) {
-		const option = document.createElement('option');
-		option.value = family;
-		option.textContent = family;
-		option.style.fontFamily = `"${family}", sans-serif`;
-		webGroup.append(option);
+	for (const category of WEB_FONT_CATEGORIES) {
+		const group = document.createElement('optgroup');
+		group.label = t(category.key);
+		for (const family of category.families) {
+			const option = document.createElement('option');
+			option.value = family;
+			option.textContent = family;
+			option.style.fontFamily = `"${family}", sans-serif`;
+			group.append(option);
+		}
+		select.append(group);
 	}
-	select.append(webGroup);
 
 	let families = [];
 	try {
