@@ -54,6 +54,7 @@ fn read_pdf_as_file_result(path: &Path) -> Option<FileResult> {
     })
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn dispatch_open_path(app: &tauri::AppHandle, path: &Path) {
     let Some(result) = read_pdf_as_file_result(path) else {
         return;
@@ -1144,11 +1145,15 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Alto desktop")
-        .run(|app, event| {
-            if let tauri::RunEvent::Opened { urls } = event {
+        .run(|_app, _event| {
+            // RunEvent::Opened n'existe que sur macOS/iOS (ouverture via Finder /
+            // association de fichiers). Sur Windows/Linux, l'ouverture passe par les
+            // arguments CLI, gérés ailleurs.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = _event {
                 for url in urls {
                     if let Ok(path) = url.to_file_path() {
-                        dispatch_open_path(app, &path);
+                        dispatch_open_path(_app, &path);
                     }
                 }
             }

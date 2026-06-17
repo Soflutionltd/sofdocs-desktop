@@ -44,6 +44,11 @@ rayon = "1"
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
 
+# Windows n'a pas d'OpenSSL système : underskrift (signature PAdES) tire openssl.
+# On force la compilation vendored (le runner Windows a Perl + NASM).
+[target.'cfg(windows)'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
