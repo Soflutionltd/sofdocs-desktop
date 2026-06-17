@@ -43,8 +43,12 @@ rayon = "1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"
+# underskrift (signature PAdES) tire openssl. Sans vendored, macOS lie la dylib
+# Homebrew (/opt/homebrew/.../libssl.3.dylib), que le hardened runtime refuse de
+# charger (Team ID différent) → crash au lancement. On lie OpenSSL en statique.
+openssl = { version = "0.10", features = ["vendored"] }
 
-# Windows n'a pas d'OpenSSL système : underskrift (signature PAdES) tire openssl.
+# Windows n'a pas d'OpenSSL système : underskrift tire openssl.
 # On force la compilation vendored (le runner Windows a Perl + NASM).
 [target.'cfg(windows)'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
