@@ -1,21 +1,22 @@
 {
 	"$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-utils/schema.json",
-	"productName": "Alto",
+	"productName": "Slate",
 	"version": "0.1.0",
-	"identifier": "com.soflution.alto",
+	"identifier": "com.soflution.slate",
 	"build": {
 		"frontendDist": "./frontend-dist",
-		"devUrl": "https://alto-1vd.pages.dev",
+		"devUrl": "http://localhost:1420",
 		"beforeDevCommand": "",
-		"beforeBuildCommand": ""
+		"beforeBuildCommand": "cd src-tauri && mkdir -p binaries && touch binaries/alto-mcp-aarch64-apple-darwin && cargo build --release --bin alto-mcp && cp target/release/alto-mcp binaries/alto-mcp-aarch64-apple-darwin"
 	},
 	"app": {
+		"withGlobalTauri": true,
 		"windows": [
 			{
-				"title": "Alto",
-				"url": "https://alto-1vd.pages.dev",
-				"width": 1280,
-				"height": 800,
+				"title": "Slate",
+				"url": "index.html",
+				"width": 1440,
+				"height": 920,
 				"minWidth": 800,
 				"minHeight": 600,
 				"resizable": true,
@@ -30,6 +31,8 @@
 	"bundle": {
 		"active": true,
 		"targets": ["app", "dmg"],
+		"resources": ["libpdfium.dylib"],
+		"externalBin": ["binaries/alto-mcp"],
 		"icon": [
 			"icons/32x32.png",
 			"icons/128x128.png",
@@ -38,25 +41,23 @@
 			"icons/icon.ico"
 		],
 		"category": "Productivity",
-		"shortDescription": "Alto — The European Office Suite",
-		"longDescription": "Alto is a sovereign European office suite. Documents, spreadsheets, presentations, PDF and mail — built in Europe, hosted in Europe.",
+		"shortDescription": "Slate — Fast local PDF reader",
+		"longDescription": "Slate is a local PDF reader and editor for opening, searching, zooming, editing and annotating PDF files without an Adobe subscription.",
 		"copyright": "© 2026 Soflution LTD",
-		"createUpdaterArtifacts": true,
+		"createUpdaterArtifacts": false,
+		"fileAssociations": [
+			{
+				"ext": ["pdf"],
+				"name": "PDF Document",
+				"description": "Portable Document Format",
+				"role": "Viewer",
+				"rank": "Default",
+				"mimeType": "application/pdf"
+			}
+		],
 		"macOS": {
-			"minimumSystemVersion": "11.0"
-		}
-	},
-	"plugins": {
-		"dialog": {},
-		"fs": {
-			"scope": ["**"]
-		},
-		"updater": {
-			"active": true,
-			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg2REYyMjZBNjdEMTA1MTEKUldRUkJkRm5haUxmaGxQWjQ2aG9sU1FrYW5COVBjUVJHSU54ZitJK3A1ZTQxVVIveEg2Lzl4SXMK",
-			"endpoints": [
-				"https://github.com/Soflution1/sofdocs-desktop/releases/latest/download/latest.json"
-			]
+			"minimumSystemVersion": "11.0",
+			"signingIdentity": "Developer ID Application: Soflution ltd (TB8CC687M3)"
 		}
 	}
 }

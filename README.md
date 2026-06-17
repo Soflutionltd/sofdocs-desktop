@@ -43,3 +43,7 @@ Alto app.
 
 ## License
 AGPL v3 — © 2026 Soflution LTD
+
+Alto engine modules derived from ONLYOFFICE are AGPL v3 ports and retain
+ONLYOFFICE / Ascensio source attribution. ONLYOFFICE trademarks and branded
+assets are not part of Alto Desktop.
