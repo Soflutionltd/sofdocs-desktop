@@ -79,8 +79,11 @@ jobs:
         run: |
           set -euo pipefail
           cd src-tauri
-          cargo build --release --bin alto-mcp
+          # tauri build.rs valide externalBin pendant la compilation : un
+          # placeholder doit exister avant de builder le sidecar lui-même.
           mkdir -p binaries
+          touch "binaries/alto-mcp-${{ matrix.triple }}${{ matrix.sidecar_ext }}"
+          cargo build --release --bin alto-mcp
           cp "target/release/alto-mcp${{ matrix.sidecar_ext }}" \
             "binaries/alto-mcp-${{ matrix.triple }}${{ matrix.sidecar_ext }}"
           ls -la binaries
