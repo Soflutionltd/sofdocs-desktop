@@ -3,6 +3,12 @@
     windows_subsystem = "windows"
 )]
 
+// Empreinte du frontend générée par build.rs. L'inclure ici force `rustc` à recompiler
+// `main.rs` (et donc `generate_context!()` à ré-embarquer le frontend) dès qu'un fichier
+// de `frontend-dist` change. Sans ça, les changements de frontend passaient inaperçus.
+const _FRONTEND_FINGERPRINT: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/frontend_fingerprint.txt"));
+
 use sofdocs_desktop::{
     llm, ocr, pdf_compress, pdf_engine, pdf_forms, pdf_ops, pdf_sign, pdf_tools, system_fonts,
 };
@@ -797,6 +803,14 @@ async fn save_file_dialog(
 }
 
 fn main() {
+    // Le moteur PDF vit désormais dans le crate `alto-pdf-engine` : son
+    // `CARGO_MANIFEST_DIR` ne pointe plus vers `src-tauri`. En dev/CI la dylib
+    // PDFium est à la racine de `src-tauri`, on l'expose donc explicitement comme
+    // dossier de recherche (ignoré en prod : c'est le dossier de l'exécutable qui prime).
+    if std::env::var_os("ALTO_PDFIUM_DIR").is_none() {
+        std::env::set_var("ALTO_PDFIUM_DIR", env!("CARGO_MANIFEST_DIR"));
+    }
+
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .try_init()

@@ -278,15 +278,18 @@
 					<section class="modifier-selected-section">
 						<div class="format-panel" id="format-panel" data-empty="true">
 							<p class="panel-kicker">Mettre le texte en forme</p>
-							<select class="format-font" id="format-font" disabled>
-								<option value="">Police du document</option>
-								<option value="Helvetica, Arial, sans-serif">Helvetica / Arial</option>
-								<option value="&quot;Times New Roman&quot;, Times, serif">Times New Roman</option>
-								<option value="Georgia, serif">Georgia</option>
-								<option value="&quot;Courier New&quot;, monospace">Courier New</option>
-								<option value="Verdana, sans-serif">Verdana</option>
-								<option value="&quot;Trebuchet MS&quot;, sans-serif">Trebuchet MS</option>
-							</select>
+							<div class="font-combo" id="font-combo">
+								<button type="button" class="font-combo-trigger" id="font-combo-trigger" disabled aria-haspopup="listbox" aria-expanded="false">
+									<span class="font-combo-value" id="font-combo-value">Police du document</span>
+									<span class="font-combo-chevron" aria-hidden="true">⌄</span>
+								</button>
+								<div class="font-combo-popover" id="font-combo-popover" hidden>
+									<div class="font-combo-search-wrap">
+										<input type="text" class="font-combo-search" id="font-combo-search" placeholder="Rechercher une police…" autocomplete="off" spellcheck="false" />
+									</div>
+									<div class="font-combo-list" id="font-combo-list" role="listbox"></div>
+								</div>
+							</div>
 							<div class="format-row">
 								<label class="format-size-field">
 									<span class="format-size-icon">A</span>

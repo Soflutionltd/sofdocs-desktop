@@ -44,6 +44,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "alto-pdf-engine"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "lopdf 0.40.0",
+ "pdfium-render",
+ "rand 0.9.4",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4681,6 +4696,7 @@ dependencies = [
 name = "sofdocs-desktop"
 version = "0.1.0"
 dependencies = [
+ "alto-pdf-engine",
  "core-foundation 0.10.1",
  "dirs",
  "font-kit",

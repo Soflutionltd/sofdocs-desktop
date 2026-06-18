@@ -866,6 +866,131 @@ button:hover:not(:disabled),
 	color: var(--text);
 }
 
+/* Combobox de police custom (remplace le <select> natif, non contenable). */
+.font-combo {
+	position: relative;
+	width: 100%;
+}
+
+.font-combo-trigger {
+	width: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	border: 1px solid var(--border);
+	border-radius: 9px;
+	padding: 8px 10px;
+	font-size: 13px;
+	background: #fff;
+	color: var(--text);
+	cursor: pointer;
+	text-align: left;
+	transition: border-color 140ms ease;
+}
+
+.font-combo-trigger:hover:not(:disabled) {
+	border-color: var(--text);
+}
+
+.font-combo-trigger:disabled {
+	cursor: default;
+}
+
+.font-combo-value {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.font-combo-chevron {
+	flex: 0 0 auto;
+	color: var(--muted);
+	font-size: 13px;
+	line-height: 1;
+}
+
+.font-combo-popover {
+	position: fixed;
+	z-index: 1200;
+	display: flex;
+	flex-direction: column;
+	background: #fff;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.12), 0 18px 48px rgba(0, 0, 0, 0.08);
+	overflow: hidden;
+}
+
+.font-combo-popover[hidden] {
+	display: none;
+}
+
+.font-combo-search-wrap {
+	flex: 0 0 auto;
+	padding: 8px;
+	border-bottom: 1px solid var(--border);
+	background: #fff;
+}
+
+.font-combo-search {
+	width: 100%;
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 7px 9px;
+	font-size: 13px;
+	color: var(--text);
+	background: #fbfbfb;
+	outline: none;
+}
+
+.font-combo-search:focus {
+	border-color: var(--accent, #1f6feb);
+	background: #fff;
+}
+
+.font-combo-list {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	padding: 4px;
+	overscroll-behavior: contain;
+}
+
+.font-combo-option {
+	display: block;
+	width: 100%;
+	text-align: left;
+	border: 0;
+	background: transparent;
+	padding: 7px 9px;
+	border-radius: 7px;
+	font-size: 13px;
+	color: var(--text);
+	cursor: pointer;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.font-combo-option:hover {
+	background: rgba(23, 23, 23, 0.06);
+}
+
+.font-combo-option.selected {
+	background: var(--accent-soft, rgba(31, 111, 235, 0.1));
+	color: var(--accent, #1f6feb);
+	font-weight: 600;
+}
+
+.font-combo-empty {
+	padding: 14px 10px;
+	font-size: 12.5px;
+	color: var(--muted);
+	text-align: center;
+}
+
 .format-row {
 	display: flex;
 	align-items: center;
@@ -1997,6 +2122,16 @@ body.sign-arming .sign-layer {
 	position: absolute;
 	z-index: 6;
 	background: #ffffff;
+	pointer-events: none;
+}
+
+/* Rectangle de sélection (marquee) : contour + intérieur bleu translucide. */
+.selection-marquee {
+	position: absolute;
+	z-index: 9;
+	background: rgba(34, 113, 177, 0.16);
+	border: 1px solid #2271b1;
+	border-radius: 1px;
 	pointer-events: none;
 }
 

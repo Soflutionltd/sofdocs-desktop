@@ -83,6 +83,10 @@ const state = {
 	editMode: false,
 	editBlocks: [],
 	selectedBlockId: null,
+	// Sélection multiple (rectangle/marquee). `selectedBlockId` reste le bloc
+	// « primaire » (panneau de gauche) ; `selectedBlockIds` contient TOUS les blocs
+	// sélectionnés, y compris le primaire.
+	selectedBlockIds: [],
 	editingBlockId: null,
 	signaturePlacements: [],
 	pendingSignature: null,
@@ -167,7 +171,12 @@ const elements = {
 	applyEditTextPanel: document.getElementById('apply-edit-text-panel'),
 	deleteEditBlockPanel: document.getElementById('delete-edit-block-panel'),
 	formatPanel: document.getElementById('format-panel'),
-	formatFont: document.getElementById('format-font'),
+	fontCombo: document.getElementById('font-combo'),
+	fontComboTrigger: document.getElementById('font-combo-trigger'),
+	fontComboValue: document.getElementById('font-combo-value'),
+	fontComboPopover: document.getElementById('font-combo-popover'),
+	fontComboSearch: document.getElementById('font-combo-search'),
+	fontComboList: document.getElementById('font-combo-list'),
 	formatSize: document.getElementById('format-size'),
 	formatColor: document.getElementById('format-color'),
 	formatBold: document.getElementById('format-bold'),
@@ -1290,6 +1299,7 @@ function clearActiveDocumentState() {
 	state.editMode = false;
 	state.editBlocks = [];
 	state.selectedBlockId = null;
+	state.selectedBlockIds = [];
 	state.signaturePlacements = [];
 	state.selectedSignatureId = null;
 	state.activeDrawer = 'search';
@@ -2112,6 +2122,7 @@ function applyEditableSnapshot(snap) {
 	state.signaturePlacements = snap.signaturePlacements.map((p) => ({ ...p }));
 	state.editBlocks = snap.editBlocks.map((b) => ({ ...b }));
 	state.selectedBlockId = null;
+	state.selectedBlockIds = [];
 	state.selectedSignatureId = null;
 	persistSignaturePlacements();
 	persistCurrentTabState();
@@ -3674,6 +3685,7 @@ async function scanEditableBlocks() {
 	}
 	state.editBlocks = state.editBlocks.filter((block) => block.page !== state.page).concat(blocks);
 	state.selectedBlockId = null;
+	state.selectedBlockIds = [];
 	renderEditBlocks();
 	updateSelectedEditField();
 	return blocks.length;
@@ -3967,6 +3979,7 @@ async function runOcrForCurrentPage(openPanel = false) {
 			.filter((block) => !(block.page === state.page && block.source === 'ocr'))
 			.concat(blocks);
 		state.selectedBlockId = null;
+		state.selectedBlockIds = [];
 		renderEditBlocks();
 		updateSelectedEditField();
 		if (openPanel) {
@@ -4217,68 +4230,380 @@ const WEB_FONT_CATEGORIES = [
 ];
 const WEB_FONT_CHOICES = WEB_FONT_CATEGORIES.flatMap((category) => category.families);
 const _webFontSet = new Set(WEB_FONT_CHOICES.map((family) => family.toLowerCase()));
+// Rempli par ensureFontSelectPopulated() avec les familles réellement installées.
+const _systemFontSet = new Set();
 
 function isWebFontChoice(family) {
 	return Boolean(family) && _webFontSet.has(family.toLowerCase());
 }
 
-// Peuple (une seule fois) le sélecteur de police avec les polices en ligne puis
-// toutes les polices installées sur la machine. La recherche se fait via la
-// saisie au clavier native du <select> (type-ahead).
+// Une police doit être chargée depuis le cloud uniquement si elle n'est PAS déjà
+// installée localement (sinon on utilise la version système, plus fidèle).
+function needsCloudFont(family) {
+	return isWebFontChoice(family) && !_systemFontSet.has(family.toLowerCase());
+}
+
+// Extrait le nom de famille principal d'une valeur CSS font-family
+// (ex: '"Bricolage Grotesque", sans-serif' -> 'Bricolage Grotesque').
+function primaryFamilyName(cssFamily) {
+	if (!cssFamily) return '';
+	const first = cssFamily.split(',')[0].trim();
+	return first.replace(/^["']|["']$/g, '');
+}
+
+// Fusionne + déduplique + trie (A→Z) une liste de familles avec le catalogue web.
+function _mergeFontFamilies(families) {
+	const merged = new Map();
+	for (const family of families) {
+		const key = family.toLowerCase();
+		_systemFontSet.add(key);
+		merged.set(key, family);
+	}
+	for (const family of WEB_FONT_CHOICES) {
+		const key = family.toLowerCase();
+		if (!merged.has(key)) merged.set(key, family);
+	}
+	return [...merged.values()].sort((a, b) =>
+		a.localeCompare(b, undefined, { sensitivity: 'base' })
+	);
+}
+
+// ─── Combobox de police (remplace le <select> natif WKWebView, non contenable) ───
+// Liste complète des familles (système + web, triées A→Z), valeur courante, et
+// libellé "auto" (police détectée du bloc).
+let _fontComboFamilies = [];
+let _fontComboValue = '';
+let _fontComboAutoLabel = 'Police du document';
+// Plage de texte mémorisée à l'ouverture du combobox (si on éditait en inline avec
+// une sous-sélection). Permet d'appliquer la police aux SEULS caractères choisis,
+// car ouvrir/chercher dans le popover détruit la sélection native.
+let _fontComboSavedRange = null;
+
+function isFontComboOpen() {
+	return Boolean(elements.fontComboPopover) && !elements.fontComboPopover.hidden;
+}
+
+// Met à jour le libellé du déclencheur (sans déclencher de changement de bloc).
+function setFontComboValue(value) {
+	_fontComboValue = value || '';
+	if (!elements.fontComboValue) return;
+	const label = _fontComboValue || _fontComboAutoLabel || 'Police du document';
+	elements.fontComboValue.textContent = label;
+	elements.fontComboValue.style.fontFamily = _fontComboValue
+		? `"${_fontComboValue}", sans-serif`
+		: '';
+}
+
+// Construit la liste déroulante (ligne "auto" + familles filtrées par la recherche).
+function renderFontComboList(filter) {
+	const list = elements.fontComboList;
+	if (!list) return;
+	const query = (filter || '').trim().toLowerCase();
+	const rows = [];
+	const autoLabel = _fontComboAutoLabel || 'Police du document';
+	if (!query || autoLabel.toLowerCase().includes(query)) {
+		rows.push({ value: '', label: autoLabel });
+	}
+	for (const family of _fontComboFamilies) {
+		if (!query || family.toLowerCase().includes(query)) {
+			rows.push({ value: family, label: family });
+		}
+	}
+
+	list.innerHTML = '';
+	if (!rows.length) {
+		const empty = document.createElement('div');
+		empty.className = 'font-combo-empty';
+		empty.textContent = 'Aucune police trouvée';
+		list.append(empty);
+		return;
+	}
+
+	const fragment = document.createDocumentFragment();
+	for (const row of rows) {
+		const option = document.createElement('button');
+		option.type = 'button';
+		option.className = 'font-combo-option';
+		option.setAttribute('role', 'option');
+		if (row.value === _fontComboValue) {
+			option.classList.add('selected');
+			option.setAttribute('aria-selected', 'true');
+		}
+		option.textContent = row.label;
+		if (row.value) option.style.fontFamily = `"${row.value}", sans-serif`;
+		option.addEventListener('click', () => onFontComboSelect(row.value));
+		fragment.append(option);
+	}
+	list.append(fragment);
+}
+
+// Positionne le popover sous le déclencheur, calé sur sa largeur (reste dans la
+// colonne d'édition) ; hauteur bornée pour rester dans la fenêtre + scroll interne.
+function positionFontComboPopover() {
+	const trigger = elements.fontComboTrigger;
+	const pop = elements.fontComboPopover;
+	if (!trigger || !pop) return;
+	const rect = trigger.getBoundingClientRect();
+	pop.style.left = `${Math.round(rect.left)}px`;
+	pop.style.top = `${Math.round(rect.bottom + 4)}px`;
+	pop.style.width = `${Math.round(rect.width)}px`;
+	const available = window.innerHeight - rect.bottom - 16;
+	pop.style.maxHeight = `${Math.max(160, Math.min(360, available))}px`;
+}
+
+function openFontCombo() {
+	const trigger = elements.fontComboTrigger;
+	const pop = elements.fontComboPopover;
+	if (!trigger || !pop || trigger.disabled || isFontComboOpen()) return;
+	void ensureFontSelectPopulated();
+	// Mémorise une éventuelle sous-sélection de texte AVANT que le popover ne vole
+	// le focus (ce qui effacerait la sélection native du contenteditable).
+	_fontComboSavedRange = captureInlineSelectionRange();
+	if (elements.fontComboSearch) elements.fontComboSearch.value = '';
+	renderFontComboList('');
+	positionFontComboPopover();
+	pop.hidden = false;
+	trigger.setAttribute('aria-expanded', 'true');
+	if (elements.fontComboSearch) {
+		requestAnimationFrame(() => elements.fontComboSearch.focus());
+	}
+	const selected = elements.fontComboList?.querySelector('.font-combo-option.selected');
+	if (selected) selected.scrollIntoView({ block: 'center' });
+}
+
+function closeFontCombo() {
+	const pop = elements.fontComboPopover;
+	if (!pop || pop.hidden) return;
+	pop.hidden = true;
+	elements.fontComboTrigger?.setAttribute('aria-expanded', 'false');
+}
+
+// Capture la plage de texte sélectionnée DANS le bloc en cours d'édition inline.
+// Renvoie { blockId, range } ou null si pas de vraie sous-sélection.
+function captureInlineSelectionRange() {
+	if (!state.editingBlockId) return null;
+	const editing = elements.pagesStack.querySelector(
+		`.edit-block.editing[data-block-id="${state.editingBlockId}"]`
+	);
+	if (!editing) return null;
+	const selection = window.getSelection();
+	if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return null;
+	if (!editing.contains(selection.anchorNode) || !editing.contains(selection.focusNode)) return null;
+	return { blockId: state.editingBlockId, range: selection.getRangeAt(0).cloneRange() };
+}
+
+// Applique la police UNIQUEMENT à la plage mémorisée (texte riche par run).
+// Renvoie true si appliqué, false si on doit retomber sur l'application globale.
+function applyFontToSavedRange(value) {
+	const saved = _fontComboSavedRange;
+	_fontComboSavedRange = null;
+	if (!saved || state.editingBlockId !== saved.blockId) return false;
+	const block = state.editBlocks.find((b) => b.id === saved.blockId);
+	if (!block || block.kind === 'image') return false;
+	const editing = elements.pagesStack.querySelector(
+		`.edit-block.editing[data-block-id="${saved.blockId}"]`
+	);
+	if (!editing) return false;
+
+	// Restaure le focus du contenteditable PUIS la sélection native sur la plage
+	// mémorisée (execCommand agit sur la sélection de l'élément focalisé).
+	editing.focus();
+	const selection = window.getSelection();
+	try {
+		selection.removeAllRanges();
+		selection.addRange(saved.range);
+	} catch (_err) {
+		return false;
+	}
+	if (selection.isCollapsed || !editing.contains(selection.anchorNode)) return false;
+
+	pushHistory();
+	// styleWithCSS -> la police s'applique en font-family (lisible via getComputedStyle).
+	try {
+		document.execCommand('styleWithCSS', false, 'true');
+	} catch (_err) {}
+	const applied = document.execCommand('fontName', false, value || 'inherit');
+	if (!applied) {
+		// Repli : enveloppe manuellement la sélection dans un span.
+		try {
+			const range = selection.getRangeAt(0);
+			const span = document.createElement('span');
+			span.style.fontFamily = value ? `"${value}", sans-serif` : '';
+			span.appendChild(range.extractContents());
+			range.insertNode(span);
+		} catch (_err) {
+			return false;
+		}
+	}
+
+	editing.classList.remove('editing-pristine');
+	editing.style.letterSpacing = '0px';
+	ensureEditMask(editing, block);
+	resizeEditingElementToContent(editing, block);
+
+	block.html = editing.innerHTML;
+	block.text = editing.innerText;
+	block.htmlEdited = true;
+	block.textEdited = true;
+	block.inlineEditDirty = true;
+	block.snapshotDataUrl = null;
+	markDirty();
+	updateFormatPanel(block);
+	editing.focus();
+	return true;
+}
+
+// Recale la géométrie d'un bloc texte sélectionné (non édité) sur la largeur réelle
+// de son contenu : sans ça, changer de police laisse l'encadré à l'ancienne taille
+// et le texte déborde. Renvoie true si la géométrie a changé.
+function refitBlockToContent(block) {
+	if (!block || block.kind === 'image') return false;
+	const element = elements.pagesStack.querySelector(
+		`.edit-block[data-block-id="${block.id}"]:not(.editing)`
+	);
+	if (!element) return false;
+
+	const prev = {
+		width: element.style.width,
+		height: element.style.height,
+		whiteSpace: element.style.whiteSpace,
+		maxWidth: element.style.maxWidth
+	};
+	element.style.maxWidth = 'none';
+	element.style.width = 'auto';
+	element.style.height = 'auto';
+	if (!block.multiline) element.style.whiteSpace = 'pre';
+	const contentWidth = Math.ceil(element.scrollWidth);
+	const contentHeight = Math.ceil(element.scrollHeight);
+	element.style.width = prev.width;
+	element.style.height = prev.height;
+	element.style.whiteSpace = prev.whiteSpace;
+	element.style.maxWidth = prev.maxWidth;
+
+	let changed = false;
+	if (!block.multiline) {
+		// Ligne simple : on recale la LARGEUR (la hauteur reste calée sur l'encre).
+		const maxW = Math.max(18, (block.pageWidth || block.width) - block.x - 2);
+		const nextW = Math.min(maxW, Math.max(18, contentWidth));
+		if (Math.abs(nextW - block.width) > 1) {
+			block.width = nextW;
+			changed = true;
+		}
+	} else {
+		// Paragraphe : largeur fixe (wrap), on recale la HAUTEUR.
+		const nextH = Math.max(6, contentHeight);
+		if (Math.abs(nextH - block.height) > 1) {
+			block.height = nextH;
+			changed = true;
+		}
+	}
+	return changed;
+}
+
+// Après un changement de police global : recale tout de suite, puis à nouveau une
+// fois la webfont réellement chargée (la largeur n'est correcte qu'à ce moment).
+function refitSelectedBlockToFont(value) {
+	const block = selectedEditBlock();
+	if (!block || block.kind === 'image') return;
+	const doFit = () => {
+		if (refitBlockToContent(block)) {
+			markDirty();
+			renderEditBlocks();
+		}
+	};
+	doFit();
+	const fam = primaryFamilyName(value) || value;
+	if (fam && document.fonts?.load) {
+		const px = block.fontSizeOverride || block.baseFontSize || 16;
+		try {
+			document.fonts.load(`${px}px "${fam}"`).then(doFit).catch(() => {});
+		} catch (_err) { /* noop */ }
+	}
+}
+
+// Sélection d'une police. Si une sous-sélection a été mémorisée à l'ouverture, on
+// applique la police À CES SEULS caractères ; sinon on l'applique au bloc entier.
+function onFontComboSelect(value) {
+	if (needsCloudFont(value)) ensureCloudFont(value);
+	if (_fontComboSavedRange && applyFontToSavedRange(value)) {
+		closeFontCombo();
+		return;
+	}
+	setFontComboValue(value);
+	applyFormatChange((block) => {
+		block.fontFamilyOverride = value || null;
+	});
+	refitSelectedBlockToFont(value);
+	closeFontCombo();
+}
+
+// Peuple (une seule fois) la liste de polices. Étape 1 : catalogue en ligne
+// IMMÉDIATEMENT (jamais de liste vide). Étape 2 : fusion des polices installées
+// dès qu'elles arrivent, avec timeout de sécurité.
 let _fontSelectPopulated = false;
 async function ensureFontSelectPopulated() {
 	if (_fontSelectPopulated) return;
-	const select = elements.formatFont;
-	if (!select) return;
 	_fontSelectPopulated = true;
 
-	// On conserve l'option 0 ("Police du document" / auto) et on remplace le reste.
-	const autoOption = select.options[0]
-		? select.options[0].cloneNode(true)
-		: null;
-	select.innerHTML = '';
-	if (autoOption) select.append(autoOption);
-
-	for (const category of WEB_FONT_CATEGORIES) {
-		const group = document.createElement('optgroup');
-		group.label = t(category.key);
-		for (const family of category.families) {
-			const option = document.createElement('option');
-			option.value = family;
-			option.textContent = family;
-			option.style.fontFamily = `"${family}", sans-serif`;
-			group.append(option);
-		}
-		select.append(group);
-	}
+	_fontComboFamilies = [...WEB_FONT_CHOICES].sort((a, b) =>
+		a.localeCompare(b, undefined, { sensitivity: 'base' })
+	);
+	if (isFontComboOpen()) renderFontComboList(elements.fontComboSearch?.value);
 
 	let families = [];
 	try {
-		families = await invokeCommand('list_system_fonts');
+		families = await Promise.race([
+			invokeCommand('list_system_fonts'),
+			new Promise((_resolve, reject) =>
+				setTimeout(() => reject(new Error('list_system_fonts timeout')), 6000)
+			)
+		]);
 	} catch (_err) {
 		families = [];
 	}
-	if (Array.isArray(families) && families.length) {
-		const systemGroup = document.createElement('optgroup');
-		systemGroup.label = t('fontsSystemGroup');
-		const fragment = document.createDocumentFragment();
-		for (const family of families) {
-			const option = document.createElement('option');
-			option.value = family;
-			option.textContent = family;
-			option.style.fontFamily = `"${family}"`;
-			fragment.append(option);
-		}
-		systemGroup.append(fragment);
-		select.append(systemGroup);
-	}
+	if (!Array.isArray(families) || !families.length) return;
 
-	// Réaligne la valeur affichée sur le bloc actuellement sélectionné, au cas où
-	// la liste système est arrivée après le premier rendu du panneau.
-	const block = state.editBlocks.find((b) => b.id === state.selectedBlockId);
-	if (block && block.fontFamilyOverride) {
-		select.value = block.fontFamilyOverride;
-	}
+	_fontComboFamilies = _mergeFontFamilies(families);
+	if (isFontComboOpen()) renderFontComboList(elements.fontComboSearch?.value);
+}
+
+// Câblage des interactions du combobox (une seule fois au chargement).
+function setupFontCombo() {
+	const trigger = elements.fontComboTrigger;
+	const search = elements.fontComboSearch;
+	if (!trigger) return;
+	trigger.addEventListener('click', (event) => {
+		event.stopPropagation();
+		if (isFontComboOpen()) closeFontCombo();
+		else openFontCombo();
+	});
+	search?.addEventListener('input', () => renderFontComboList(search.value));
+	search?.addEventListener('keydown', (event) => {
+		if (event.key === 'Escape') {
+			event.stopPropagation();
+			closeFontCombo();
+			trigger.focus();
+		} else if (event.key === 'Enter') {
+			event.preventDefault();
+			const first = elements.fontComboList?.querySelector('.font-combo-option');
+			if (first) first.click();
+		}
+	});
+	// Fermeture au clic à l'extérieur.
+	document.addEventListener('click', (event) => {
+		if (!isFontComboOpen()) return;
+		if (!elements.fontCombo?.contains(event.target) && !elements.fontComboPopover?.contains(event.target)) {
+			closeFontCombo();
+		}
+	});
+	// Le popover est en position: fixed → on le ferme si la mise en page bouge.
+	// MAIS surtout pas quand on scrolle À L'INTÉRIEUR de la liste (molette).
+	window.addEventListener('resize', () => closeFontCombo());
+	window.addEventListener('scroll', (event) => {
+		if (!isFontComboOpen()) return;
+		if (elements.fontComboPopover?.contains(event.target)) return;
+		closeFontCombo();
+	}, true);
 }
 
 function applyBlockFontStyle(element, block) {
@@ -4491,6 +4816,128 @@ function textInkBox(block) {
 	return { top, height };
 }
 
+// Canvas réutilisé pour mesurer l'encre réelle d'un texte rendu.
+let _inkMeasureCanvas = null;
+function inkMeasureCanvas() {
+	if (!_inkMeasureCanvas) _inkMeasureCanvas = document.createElement('canvas');
+	return _inkMeasureCanvas;
+}
+
+// Mesure l'encre RÉELLE d'un texte par scan de pixels (fiable quelle que soit la
+// police, contrairement à actualBoundingBox* qui varie selon les implémentations).
+// Renvoie ascent/descent par rapport à la ligne de base alphabétique, en px CSS.
+function measureTextInk(text, fontStr) {
+	const trimmed = (text || '').trim();
+	if (!trimmed) return null;
+	const canvas = inkMeasureCanvas();
+	const ctx = canvas.getContext('2d', { willReadFrequently: true });
+	ctx.font = fontStr;
+	const m = ctx.measureText(trimmed);
+	const fAsc = m.fontBoundingBoxAscent || m.actualBoundingBoxAscent || 0;
+	const fDesc = m.fontBoundingBoxDescent || m.actualBoundingBoxDescent || 0;
+	const w = Math.max(1, Math.ceil(m.width) + 4);
+	const h = Math.max(1, Math.ceil(fAsc + fDesc) + 6);
+	const baselineY = Math.ceil(fAsc) + 3;
+	canvas.width = w;
+	canvas.height = h;
+	// width/height réinitialise le contexte → reposer font + baseline.
+	ctx.font = fontStr;
+	ctx.textBaseline = 'alphabetic';
+	ctx.fillStyle = '#000';
+	ctx.clearRect(0, 0, w, h);
+	ctx.fillText(trimmed, 2, baselineY);
+	let data;
+	try {
+		data = ctx.getImageData(0, 0, w, h).data;
+	} catch (_err) {
+		return null;
+	}
+	let top = -1;
+	let bottom = -1;
+	for (let y = 0; y < h; y++) {
+		let rowHasInk = false;
+		const rowStart = y * w * 4;
+		for (let x = 0; x < w; x++) {
+			if (data[rowStart + x * 4 + 3] > 16) {
+				rowHasInk = true;
+				break;
+			}
+		}
+		if (rowHasInk) {
+			if (top < 0) top = y;
+			bottom = y;
+		}
+	}
+	if (top < 0) return null;
+	return {
+		ascent: baselineY - top, // px au-dessus de la ligne de base
+		descent: bottom - baselineY + 1, // px sous la ligne de base
+		height: bottom - top + 1
+	};
+}
+
+// Recale la boîte d'un bloc texte ré-écrit (police/texte changés) APRÈS rendu.
+// On mesure l'ENCRE RÉELLE (scan de pixels) de la police affichée + la ligne de base
+// réelle dans le DOM. La boîte épouse l'encre, ancrée sur la LIGNE DE BASE d'origine
+// (bas de l'encre PDF) : le texte ne saute pas en changeant de police, ni col en
+// haut ni vide en bas, quelle que soit la police. Re-mesuré quand la webfont charge.
+function recenterDirtyTextBox(element, block) {
+	const apply = () => {
+		if (!element.isConnected) return;
+		const text = (element.textContent || '').trim();
+		if (!text) return;
+
+		// Enveloppe le contenu pour pouvoir le remonter SANS bouger la boîte.
+		let wrap = element.querySelector(':scope > .ink-shift');
+		if (!wrap) {
+			wrap = document.createElement('span');
+			wrap.className = 'ink-shift';
+			wrap.style.display = 'block';
+			while (element.firstChild) wrap.appendChild(element.firstChild);
+			element.appendChild(wrap);
+		}
+		wrap.style.lineHeight = 'normal';
+		wrap.style.transform = 'none';
+		element.style.lineHeight = 'normal';
+		element.style.overflow = 'visible';
+		element.style.height = 'auto';
+
+		const cs = getComputedStyle(element);
+		const fontStr = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize}/normal ${cs.fontFamily}`;
+		const ink = measureTextInk(text, fontStr);
+		if (!ink || !(ink.height > 0)) return;
+
+		// Ligne de base réelle dans le DOM (strut inline-block aligné baseline).
+		const strut = document.createElement('span');
+		strut.style.cssText =
+			'display:inline-block;width:0;height:0;vertical-align:baseline;overflow:hidden';
+		wrap.appendChild(strut);
+		const wrapRect = wrap.getBoundingClientRect();
+		const strutRect = strut.getBoundingClientRect();
+		const ratio = element.offsetWidth > 0 ? element.offsetWidth / Math.max(1, element.getBoundingClientRect().width) : 1;
+		const baselineOffset = (strutRect.top - wrapRect.top) * ratio; // px CSS depuis le haut du wrap
+		strut.remove();
+
+		const pdfInk = textInkBox(block);
+		// Ligne de base d'origine ≈ bas de l'encre (caps) ; fallback : bas du bloc lâche.
+		const baseline = pdfInk ? pdfInk.top + pdfInk.height : block.y + Math.max(block.height, 14);
+
+		// On remonte le contenu pour que le haut de l'encre touche le haut de la boîte.
+		const shift = baselineOffset - ink.ascent;
+		wrap.style.transform = `translateY(${-shift}px)`;
+		element.style.height = `${ink.height}px`;
+		element.style.top = `${baseline - ink.ascent}px`;
+	};
+	apply();
+	// La hauteur dépend de la police : si c'est une webfont pas encore chargée, ses
+	// métriques arriveront plus tard → on re-mesure une fois prête.
+	const fam = primaryFamilyName(block.fontFamilyOverride || '');
+	const px = block.fontSizeOverride || block.baseFontSize || 16;
+	if (fam && document.fonts?.load && !document.fonts.check(`${px}px "${fam}"`)) {
+		document.fonts.load(`${px}px "${fam}"`).then(apply).catch(() => {});
+	}
+}
+
 function renderEditBlocksForPage(pageNumber) {
 	const data = getPageData(pageNumber);
 	if (!data) return;
@@ -4500,6 +4947,22 @@ function renderEditBlocksForPage(pageNumber) {
 	editLayer.style.width = `${data.viewportWidth}px`;
 	editLayer.style.height = `${data.viewportHeight}px`;
 	if (!state.editMode) return;
+
+	// Blocs supprimés (hidden) : on peint un masque blanc sur leur emplacement
+	// d'origine pour que le texte PDF disparaisse réellement à l'écran (sinon il
+	// reste rasterisé sous l'overlay, donnant l'impression d'un bloc « figé »).
+	// Identique au masquage fait à l'export dans renderFlattenedPage.
+	state.editBlocks
+		.filter((block) => block.page === pageNumber && block.hidden)
+		.forEach((block) => {
+			const mask = document.createElement('div');
+			mask.className = 'edit-block-mask';
+			mask.style.left = `${(block.originalX ?? block.x) - 1.5}px`;
+			mask.style.top = `${(block.originalY ?? block.y) - 1.5}px`;
+			mask.style.width = `${Math.max(block.width, block.originalWidth || block.width, 18) + 3}px`;
+			mask.style.height = `${Math.max(block.height, block.originalHeight || block.height, 14) + 3}px`;
+			editLayer.append(mask);
+		});
 
 	state.editBlocks
 		.filter((block) => block.page === pageNumber && !block.hidden)
@@ -4550,7 +5013,7 @@ function renderEditBlocksForPage(pageNumber) {
 			}
 
 			const element = document.createElement('div');
-			const isSelected = block.id === state.selectedBlockId;
+			const isSelected = isBlockSelected(block);
 			// Bloc dont SEULS des glyphes ont été masqués (aucune frappe) : hors
 			// édition il ne rend aucun contenu, donc le fond blanc de `.dirty`
 			// peindrait un carré vide sur le PDF. On le laisse transparent.
@@ -4574,7 +5037,25 @@ function renderEditBlocksForPage(pageNumber) {
 			let multilineHalfLeading = 0;
 			if (multiline) {
 				element.classList.add('multiline');
-				const lh = block.originalHeight ? block.originalHeight / lineCount : block.height / lineCount;
+				// Interligne. Pour un paragraphe NATIF non modifié, originalHeight couvre
+				// déjà ses N lignes → originalHeight/lineCount = pas réel. Mais si on a
+				// COLLÉ/édité du texte (lignes ajoutées), originalHeight ne correspond plus
+				// au nombre de lignes (ex: 12 lignes collées dans un bloc d'1 ligne → pas
+				// minuscule → lignes empilées). Dans ce cas on dérive l'interligne de la
+				// taille de police.
+				const contentEdited = block.inlineEditDirty || isBlockTextEdited(block);
+				let lh;
+				if (!contentEdited && block.originalHeight) {
+					lh = block.originalHeight / lineCount;
+				} else {
+					const fs =
+						block.fontSizeOverride ||
+						(block.pdfFontSize > 0
+							? block.pdfFontSize
+							: block.baseFontSize ||
+								Math.max(8, Math.min(48, Math.round((block.originalHeight || 14) * 0.78))));
+					lh = fs * 1.32;
+				}
 				if (lh > 0) {
 					element.style.lineHeight = `${lh}px`;
 					// CSS centre chaque ligne dans sa boîte => une demi-marge (lh - police)/2
@@ -4596,7 +5077,9 @@ function renderEditBlocksForPage(pageNumber) {
 			// État repos (ni en édition, ni déplacé) : resserrer le cadre sur l'encre
 			// réelle pour supprimer le vide sous le texte (loose bounds). On ne touche
 			// PAS à block.y/height (géométrie d'édition préservée → aucun mouvement au
-			// double-clic), seulement à l'affichage de la boîte.
+			// double-clic), seulement à l'affichage de la boîte. Les blocs ré-écrits
+			// (texte/police modifiés) sont recalés APRÈS rendu par recenterDirtyTextBox,
+			// à partir des métriques RÉELLES de la police choisie (pas de l'ancienne).
 			if (block.kind !== 'image' && !isEditing && !dirty && !multiline) {
 				const inkBox = textInkBox(block);
 				if (inkBox) {
@@ -4737,6 +5220,49 @@ function renderEditBlocksForPage(pageNumber) {
 						element.blur();
 					}
 				});
+				// Collage : on insère du TEXTE BRUT (le HTML/styles de la source — Word,
+				// PDF, navigateur — empilaient les lignes et imposaient des interlignes
+				// nuls). Les sauts de ligne deviennent de vrais <br>.
+				element.addEventListener('paste', (event) => {
+					event.preventDefault();
+					event.stopPropagation();
+					const raw =
+						(event.clipboardData && event.clipboardData.getData('text/plain')) || '';
+					if (!raw) return;
+					const clean = raw.replace(/\r\n?/g, '\n');
+					const glyphMode =
+						Array.isArray(block.pdfChars) && block.pdfChars.length && !isBlockTextEdited(block);
+					if (glyphMode) {
+						// Mode glyphe (texte PDF non ré-écrit) : on reconstruit via le pipeline texte.
+						insertPdfTextAtCaret(block, clean);
+						return;
+					}
+					const selection = window.getSelection();
+					if (!selection || !selection.rangeCount) return;
+					const range = selection.getRangeAt(0);
+					range.deleteContents();
+					const fragment = document.createDocumentFragment();
+					clean.split('\n').forEach((line, index) => {
+						if (index > 0) fragment.appendChild(document.createElement('br'));
+						if (line) fragment.appendChild(document.createTextNode(line));
+					});
+					const lastNode = fragment.lastChild;
+					range.insertNode(fragment);
+					if (lastNode) {
+						const after = document.createRange();
+						after.setStartAfter(lastNode);
+						after.collapse(true);
+						selection.removeAllRanges();
+						selection.addRange(after);
+					}
+					if (clean.includes('\n')) block.multiline = true;
+					if (!block.inlineEditDirty) {
+						ensureEditMask(element, block);
+						element.classList.remove('editing-pristine');
+					}
+					block.inlineEditDirty = true;
+					resizeEditingElementToContent(element, block);
+				});
 				element.addEventListener('input', () => {
 					const firstEdit = !block.inlineEditDirty;
 					block.inlineEditDirty = true;
@@ -4802,6 +5328,12 @@ function renderEditBlocksForPage(pageNumber) {
 			if ((showAsText || (showAsSnapshot && element.textContent)) && block.kind !== 'image') {
 				matchFontFromTextLayer(element, block, data);
 				applyBlockFormatOverrides(element, block);
+			}
+
+			// Bloc texte ré-écrit (police/texte modifiés) : recaler la boîte sur la
+			// hauteur RÉELLE de la police choisie, ancrée à la ligne de base d'origine.
+			if (showAsText && !isEditing && !multiline && block.kind !== 'image') {
+				recenterDirtyTextBox(element, block);
 			}
 		});
 }
@@ -5346,6 +5878,7 @@ function finishInlineEdit(id, newText) {
 
 function selectEditBlock(id) {
 	state.selectedBlockId = id;
+	state.selectedBlockIds = id ? [id] : [];
 	const block = state.editBlocks.find((candidate) => candidate.id === id);
 	if (block) refreshBlockFontInfo(block);
 	renderEditBlocks();
@@ -5359,6 +5892,24 @@ function selectEditBlock(id) {
 
 function selectedEditBlock() {
 	return state.editBlocks.find((block) => block.id === state.selectedBlockId) || null;
+}
+
+// Un bloc est sélectionné s'il est le primaire OU dans la sélection multiple.
+function isBlockSelected(block) {
+	if (!block) return false;
+	return (
+		block.id === state.selectedBlockId ||
+		(Array.isArray(state.selectedBlockIds) && state.selectedBlockIds.includes(block.id))
+	);
+}
+
+// Vide toute la sélection (primaire + multiple). Retourne true si quelque chose
+// a changé.
+function clearBlockSelection() {
+	const had = state.selectedBlockId || (state.selectedBlockIds && state.selectedBlockIds.length);
+	state.selectedBlockId = null;
+	state.selectedBlockIds = [];
+	return Boolean(had);
 }
 
 function updateSelectedEditField() {
@@ -5386,7 +5937,7 @@ function updateFormatPanel(block) {
 	panel.dataset.empty = active ? 'false' : 'true';
 
 	const controls = [
-		elements.formatFont,
+		elements.fontComboTrigger,
 		elements.formatSize,
 		elements.formatColor,
 		elements.formatBold,
@@ -5397,16 +5948,17 @@ function updateFormatPanel(block) {
 	for (const control of controls) {
 		if (control) control.disabled = !active;
 	}
-	if (!active) return;
+	if (!active) {
+		closeFontCombo();
+		return;
+	}
 
 	const detected = cleanFontName(block.fontName);
-	const autoOption = elements.formatFont.options[0];
-	if (autoOption) {
-		autoOption.textContent = detected ? `Auto : ${detected}` : 'Police détectée';
-	}
+	_fontComboAutoLabel = detected ? `Auto : ${detected}` : 'Police détectée';
 	if (detected) ensureCloudFont(baseFamilyName(detected));
 
-	elements.formatFont.value = block.fontFamilyOverride || '';
+	setFontComboValue(block.fontFamilyOverride || '');
+	if (isFontComboOpen()) renderFontComboList(elements.fontComboSearch?.value);
 	updateFontWarning(detected);
 	const size = block.fontSizeOverride || block.baseFontSize || (block.pdfFontSize > 0 ? Math.round(block.pdfFontSize) : Math.max(8, Math.round(block.height * 0.78)));
 	elements.formatSize.value = Math.round(size * 10) / 10;
@@ -5431,7 +5983,7 @@ function ensureFontWarningNode() {
 	node.id = 'format-font-warning';
 	node.className = 'format-font-warning';
 	node.hidden = true;
-	const fontField = elements.formatFont?.closest('.format-font') || elements.formatFont?.parentElement;
+	const fontField = elements.fontCombo || elements.fontComboTrigger?.parentElement;
 	if (fontField && fontField.parentElement) {
 		fontField.insertAdjacentElement('afterend', node);
 	} else {
@@ -5610,11 +6162,14 @@ function applySelectedText() {
 }
 
 function hideSelectedBlock() {
-	const block = selectedEditBlock();
-	if (!block) return;
+	// Réunit le primaire + la sélection multiple (sans doublon).
+	const ids = new Set(state.selectedBlockIds || []);
+	if (state.selectedBlockId) ids.add(state.selectedBlockId);
+	const targets = state.editBlocks.filter((block) => ids.has(block.id));
+	if (!targets.length) return;
 	pushHistory();
-	block.hidden = true;
-	state.selectedBlockId = null;
+	for (const block of targets) block.hidden = true;
+	clearBlockSelection();
 	markDirty();
 	renderEditBlocks();
 	updateSelectedEditField();
@@ -6003,6 +6558,7 @@ function toggleEditMode(force) {
 function exitEditMode() {
 	state.editMode = false;
 	state.selectedBlockId = null;
+	state.selectedBlockIds = [];
 	elements.app.classList.remove('editing');
 	elements.modifyTab.classList.remove('active');
 	elements.allToolsTab?.classList.add('active');
@@ -6124,8 +6680,16 @@ async function exportEditedPdf(suggestedName) {
 			// utilisées par les blocs édités sont bien chargées, sinon le canvas
 			// dessinerait avec une police de repli dans le JPEG exporté.
 			for (const block of state.editBlocks) {
-				if (isWebFontChoice(block.fontFamilyOverride)) {
+				if (needsCloudFont(block.fontFamilyOverride)) {
 					ensureCloudFont(block.fontFamilyOverride);
+				}
+				// Polices appliquées sur des sous-sélections (runs HTML).
+				if (block.htmlEdited && block.html) {
+					const runs = extractRunsFromHtml(block.html, block.bold, block.italic, block.underline, '');
+					for (const run of runs) {
+						const fam = primaryFamilyName(run.fontFamily);
+						if (fam && needsCloudFont(fam)) ensureCloudFont(fam);
+					}
 				}
 			}
 			if (document.fonts?.ready) {
@@ -7785,12 +8349,16 @@ function openProtectModal() {
 
 // Décompose le HTML d'un bloc en segments stylés (texte + gras/italique/souligné),
 // pour redessiner fidèlement le formatage partiel lors de l'export.
-function extractRunsFromHtml(html, baseBold, baseItalic, baseUnderline) {
+function extractRunsFromHtml(html, baseBold, baseItalic, baseUnderline, baseFamily) {
 	const host = document.createElement('div');
 	host.style.cssText = 'position:absolute;left:-99999px;top:0;white-space:pre;visibility:hidden;';
 	host.style.fontWeight = baseBold ? '700' : '400';
 	host.style.fontStyle = baseItalic ? 'italic' : 'normal';
 	host.style.textDecoration = baseUnderline ? 'underline' : 'none';
+	// On applique la police de base du bloc au host : ainsi le texte NON stylé hérite
+	// de la bonne famille, et seules les portions avec un override (span/font) la
+	// remplacent — getComputedStyle restitue la famille effective par run.
+	if (baseFamily) host.style.fontFamily = baseFamily;
 	host.innerHTML = html;
 	document.body.appendChild(host);
 	const runs = [];
@@ -7805,16 +8373,17 @@ function extractRunsFromHtml(html, baseBold, baseItalic, baseUnderline) {
 					text,
 					bold: (parseInt(cs.fontWeight, 10) || 400) >= 600,
 					italic: cs.fontStyle === 'italic' || cs.fontStyle === 'oblique',
-					underline: decoration.includes('underline')
+					underline: decoration.includes('underline'),
+					fontFamily: cs.fontFamily || ''
 				});
 			} else if (child.nodeType === Node.ELEMENT_NODE) {
 				const tag = child.tagName;
 				if (tag === 'BR') {
-					runs.push({ text: '\n', bold: false, italic: false, underline: false });
+					runs.push({ text: '\n', bold: false, italic: false, underline: false, fontFamily: '' });
 				} else {
 					const isBlock = tag === 'DIV' || tag === 'P';
 					if (isBlock && runs.length && runs[runs.length - 1].text !== '\n') {
-						runs.push({ text: '\n', bold: false, italic: false, underline: false });
+						runs.push({ text: '\n', bold: false, italic: false, underline: false, fontFamily: '' });
 					}
 					walk(child);
 				}
@@ -7823,7 +8392,7 @@ function extractRunsFromHtml(html, baseBold, baseItalic, baseUnderline) {
 	};
 	walk(host);
 	document.body.removeChild(host);
-	return runs.length ? runs : [{ text: host.innerText || '', bold: baseBold, italic: baseItalic, underline: baseUnderline }];
+	return runs.length ? runs : [{ text: host.innerText || '', bold: baseBold, italic: baseItalic, underline: baseUnderline, fontFamily: baseFamily || '' }];
 }
 
 async function renderFlattenedPage(pageNumber) {
@@ -7883,17 +8452,25 @@ async function renderFlattenedPage(pageNumber) {
 			const baseColor = block.color || '#111111';
 
 			// Runs de formatage partiel si présents, sinon un seul run pour tout le bloc.
+			// On passe la police du bloc comme base : chaque run porte alors sa famille
+			// effective (héritée du bloc, ou override appliqué sur une sous-sélection).
 			const runs = block.htmlEdited && block.html
-				? extractRunsFromHtml(block.html, block.bold, block.italic, block.underline)
-				: [{ text: block.text, bold: block.bold, italic: block.italic, underline: block.underline }];
+				? extractRunsFromHtml(block.html, block.bold, block.italic, block.underline, family)
+				: [{ text: block.text, bold: block.bold, italic: block.italic, underline: block.underline, fontFamily: family }];
 
-			const fontFor = (run) =>
-				`${run.italic ? 'italic' : 'normal'} ${run.bold ? '700' : '400'} ${fontPx}px ${family}`;
+			const fontFor = (run) => {
+				const runFamily = run.fontFamily && run.fontFamily.trim() ? run.fontFamily : family;
+				return `${run.italic ? 'italic' : 'normal'} ${run.bold ? '700' : '400'} ${fontPx}px ${runFamily}`;
+			};
 
 			// Largeur de colonne + interligne pour le retour à la ligne (paragraphes).
 			const colWidth = block.multiline ? Math.max(20, width) : Infinity;
+			// Interligne : pour du texte édité/collé, dérivé de la police (le bloc a pu
+			// changer de nombre de lignes). Pour un paragraphe natif, hauteur/lignes.
 			const lineHeightPx = block.multiline
-				? Math.max(fontPx, (block.height * blockScaleY) / Math.max(1, (block.text || '').split('\n').length))
+				? (textEdited
+					? fontPx * 1.32
+					: Math.max(fontPx, (block.height * blockScaleY) / Math.max(1, (block.text || '').split('\n').length)))
 				: fontPx;
 
 			// Tokenisation en mots (avec espaces), \n = saut dur.
@@ -8857,11 +9434,97 @@ elements.modifyTool.addEventListener('click', () => toggleEditMode(true));
 elements.exitEditMode.addEventListener('click', exitEditMode);
 elements.scanEditBlocks.addEventListener('click', scanEditableBlocks);
 elements.ocrCurrentPage.addEventListener('click', () => runOcrForCurrentPage(true));
+// ── Sélection au rectangle (marquee) ────────────────────────────────────────
+// En mode édition, un drag sur une zone vide d'une page dessine un rectangle bleu.
+// Au relâcher, tous les blocs de cette page que le rectangle touche sont sélectionnés
+// (puis Suppr les efface tous).
+let suppressNextPageClick = false;
+
+elements.pagesStack.addEventListener('pointerdown', (event) => {
+	if (!state.editMode || event.button !== 0 || state.editingBlockId) return;
+	// Le drag doit démarrer sur le FOND d'une page (edit-layer), pas sur un bloc.
+	const editLayer = event.target.classList?.contains('edit-layer') ? event.target : null;
+	if (!editLayer) return;
+
+	const pageNumber = Number(editLayer.dataset.page);
+	const data = getPageData(pageNumber);
+	if (!data) return;
+
+	const rect = editLayer.getBoundingClientRect();
+	const sx = data.viewportWidth / Math.max(1, rect.width);
+	const sy = data.viewportHeight / Math.max(1, rect.height);
+	const toLocal = (e) => ({
+		x: Math.max(0, Math.min(data.viewportWidth, (e.clientX - rect.left) * sx)),
+		y: Math.max(0, Math.min(data.viewportHeight, (e.clientY - rect.top) * sy))
+	});
+	const start = toLocal(event);
+
+	let marquee = null;
+	let dragging = false;
+
+	const onMove = (moveEvent) => {
+		const cur = toLocal(moveEvent);
+		const dx = cur.x - start.x;
+		const dy = cur.y - start.y;
+		if (!dragging) {
+			if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+			dragging = true;
+			marquee = document.createElement('div');
+			marquee.className = 'selection-marquee';
+			editLayer.append(marquee);
+		}
+		marquee.style.left = `${Math.min(start.x, cur.x)}px`;
+		marquee.style.top = `${Math.min(start.y, cur.y)}px`;
+		marquee.style.width = `${Math.abs(dx)}px`;
+		marquee.style.height = `${Math.abs(dy)}px`;
+	};
+
+	const onUp = (upEvent) => {
+		window.removeEventListener('pointermove', onMove);
+		window.removeEventListener('pointerup', onUp);
+		if (!dragging) return;
+		const cur = toLocal(upEvent);
+		const selLeft = Math.min(start.x, cur.x);
+		const selTop = Math.min(start.y, cur.y);
+		const selRight = Math.max(start.x, cur.x);
+		const selBottom = Math.max(start.y, cur.y);
+		if (marquee) marquee.remove();
+
+		// Blocs de la page (non masqués) dont la boîte intersecte le rectangle.
+		const hits = state.editBlocks.filter((block) => {
+			if (block.page !== pageNumber || block.hidden) return false;
+			const bw = Math.max(block.width, 1);
+			const bh = Math.max(block.height, 1);
+			return block.x < selRight && block.x + bw > selLeft && block.y < selBottom && block.y + bh > selTop;
+		});
+
+		// Empêche le clic de fin de drag de vider la sélection qu'on vient de faire.
+		suppressNextPageClick = true;
+		if (!hits.length) {
+			clearBlockSelection();
+		} else {
+			state.selectedBlockIds = hits.map((block) => block.id);
+			state.selectedBlockId = hits[0].id;
+			refreshBlockFontInfo(hits[0]);
+		}
+		renderEditBlocks();
+		updateSelectedEditField();
+	};
+
+	window.addEventListener('pointermove', onMove);
+	window.addEventListener('pointerup', onUp);
+});
+
 elements.pagesStack.addEventListener('click', (event) => {
+	// Un marquee vient d'aboutir : on ne traite pas le clic de fin de drag
+	// (sinon il viderait la sélection qu'on vient de faire).
+	if (suppressNextPageClick) {
+		suppressNextPageClick = false;
+		return;
+	}
 	if (event.target.closest('.edit-block') || event.target.closest('.sign-placement')) return;
 	let changed = false;
-	if (state.selectedBlockId && state.editingBlockId === null) {
-		state.selectedBlockId = null;
+	if (state.editingBlockId === null && clearBlockSelection()) {
 		changed = true;
 	}
 	if (state.selectedSignatureId) {
@@ -8878,12 +9541,9 @@ elements.redoButton?.addEventListener('click', redoEdit);
 document.addEventListener(
 	'keydown',
 	(event) => {
-		if (event.key !== 'Backspace' || event.metaKey || event.ctrlKey || event.altKey) return;
-		if (!state.editingBlockId) return;
-		const block = state.editBlocks.find((candidate) => candidate.id === state.editingBlockId);
-		if (!block || !Array.isArray(block.pdfChars) || !block.pdfChars.length) return;
-		// Bloc déjà converti en édition texte : le caret natif gère Backspace.
-		if (isBlockTextEdited(block)) return;
+		if ((event.key !== 'Backspace' && event.key !== 'Delete') || event.metaKey || event.ctrlKey || event.altKey) {
+			return;
+		}
 
 		const target = event.target;
 		const isFormField =
@@ -8891,6 +9551,26 @@ document.addEventListener(
 			(target.tagName === 'INPUT' ||
 				target.tagName === 'TEXTAREA' ||
 				(target.isContentEditable && !target.classList?.contains('pdf-glyph-editing')));
+
+		// Bloc(s) sélectionné(s) (hors édition) : Suppr/Retour supprime le(s) bloc(s).
+		if (!state.editingBlockId) {
+			const hasSelection =
+				state.selectedBlockId || (state.selectedBlockIds && state.selectedBlockIds.length);
+			if (state.editMode && hasSelection && !isFormField) {
+				event.preventDefault();
+				event.stopPropagation();
+				hideSelectedBlock();
+			}
+			return;
+		}
+
+		// En édition « glyphe » (texte PDF non encore ré-écrit) : Backspace efface le
+		// caractère avant le caret. (Delete/sélection sont gérés au niveau du bloc.)
+		if (event.key !== 'Backspace') return;
+		const block = state.editBlocks.find((candidate) => candidate.id === state.editingBlockId);
+		if (!block || !Array.isArray(block.pdfChars) || !block.pdfChars.length) return;
+		// Bloc déjà converti en édition texte : le caret natif gère Backspace.
+		if (isBlockTextEdited(block)) return;
 		if (isFormField) return;
 
 		event.preventDefault();
@@ -8926,17 +9606,7 @@ elements.deleteEditBlock.addEventListener('click', hideSelectedBlock);
 elements.applyEditTextPanel.addEventListener('click', applySelectedText);
 elements.deleteEditBlockPanel.addEventListener('click', hideSelectedBlock);
 
-elements.formatFont?.addEventListener('change', () => {
-	const value = elements.formatFont.value;
-	// Police en ligne : on la charge (et on la garde au chaud) pour qu'elle soit
-	// disponible au rendu canvas et à l'aplatissement de l'export.
-	if (isWebFontChoice(value)) {
-		ensureCloudFont(value);
-	}
-	applyFormatChange((block) => {
-		block.fontFamilyOverride = value || null;
-	});
-});
+setupFontCombo();
 elements.formatSize?.addEventListener('change', () => {
 	const size = parseFloat(elements.formatSize.value);
 	if (!Number.isFinite(size) || size < 4) return;
@@ -9035,8 +9705,7 @@ document.addEventListener(
 		// Clic dans le vide : on retire la sélection (cadre bleu) et la signature active.
 		if (!insideEditBlock && !insideSign) {
 			let changed = false;
-			if (state.selectedBlockId) {
-				state.selectedBlockId = null;
+			if (clearBlockSelection()) {
 				changed = true;
 			}
 			if (state.selectedSignatureId) {
@@ -9370,3 +10039,6 @@ applyIcons();
 localizeUi();
 updateUi();
 renderHome();
+// Précharge le catalogue de polices au démarrage (liste prête dès la 1re ouverture
+// du panneau de mise en forme, et le backend a le temps de répondre).
+void ensureFontSelectPopulated();

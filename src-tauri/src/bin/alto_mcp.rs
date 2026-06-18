@@ -16,6 +16,12 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
 fn main() {
+    // Voir main.rs : le moteur PDF étant dans le crate `alto-pdf-engine`, on expose
+    // `src-tauri` (où se trouve la dylib PDFium en dev/CI) comme dossier de recherche.
+    if std::env::var_os("ALTO_PDFIUM_DIR").is_none() {
+        std::env::set_var("ALTO_PDFIUM_DIR", env!("CARGO_MANIFEST_DIR"));
+    }
+
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
 
